@@ -1,74 +1,118 @@
 import sys
 
-ptr = 0
-
-def e(s):
-    sys.stdout.write(s)
-
-def move_to(target):
-    global ptr
-    if target > ptr: e(">" * (target - ptr))
-    if target < ptr: e("<" * (ptr - target))
-    ptr = target
-
 def build_dummy_pe():
-    # 1024バイトの配列 (ヘッダ512バイト + コード512バイト)
-    pe = [0] * 1024
-    
+    # 3セクター分 (1536バイト) の空のバイナリ配列
+    pe = bytearray(1536)
+
+    # バイナリ書き込み用のヘルパー関数
+    def w32(offset, val): pe[offset:offset+4] = val.to_bytes(4, 'little')
+    def w64(offset, val): pe[offset:offset+8] = val.to_bytes(8, 'little')
+    def w16(offset, val): pe[offset:offset+2] = val.to_bytes(2, 'little')
+    def wstr(offset, s):  pe[offset:offset+len(s)] = s.encode('ascii')
+
     # === 1. MS-DOS Header ===
-    pe[0], pe[1] = 0x4D, 0x5A # 'MZ'
-    pe[0x3C] = 0x40 # e_lfanew (PEヘッダへのオフセット)
-    
-    # === 2. PE Signature ===
-    pe[0x40], pe[0x41] = 0x50, 0x45 # 'PE\0\0'
-    
-    # === 3. COFF File Header ===
-    pe[0x44], pe[0x45] = 0x64, 0x86 # Machine: x86_64
-    pe[0x46] = 0x01 # NumberOfSections: 1
-    pe[0x54] = 0xF0 # SizeOfOptionalHeader: 240
-    pe[0x56] = 0x22 # Characteristics: Executable | LargeAddressAware
-    
-    # === 4. Optional Header (PE32+) ===
-    pe[0x58], pe[0x59] = 0x0B, 0x02 # Magic: PE32+
-    
-    # 🚀 修正: エントリポイントを 0x1000 (.textセクションの開始位置) に設定
-    pe[0x68], pe[0x69] = 0x00, 0x10 # AddressOfEntryPoint: 0x1000
-    
-    pe[0x74] = 0x40 # ImageBase: 0x400000
-    pe[0x78], pe[0x79] = 0x00, 0x10 # SectionAlignment: 0x1000
-    pe[0x7C], pe[0x7D] = 0x00, 0x02 # FileAlignment: 0x200
-    pe[0x80] = 0x05 # MajorOperatingSystemVersion: 5
-    pe[0x88] = 0x05 # MajorSubsystemVersion: 5
-    pe[0x90], pe[0x91] = 0x00, 0x20 # SizeOfImage: 0x2000
-    pe[0x94], pe[0x95] = 0x00, 0x02 # SizeOfHeaders: 0x200
-    pe[0x9C] = 0x03 # Subsystem: 3 (Windows Console)
-    pe[0xC4] = 0x10 # NumberOfRvaAndSizes: 16
-    
-    # === 5. Section Table (.text) ===
-    # オフセット 0x148 から
-    pe[0x148:0x14D] = [0x2E, 0x74, 0x65, 0x78, 0x74] # Name: '.text'
-    pe[0x150], pe[0x151] = 0x00, 0x10 # VirtualSize: 0x1000
-    pe[0x154], pe[0x155] = 0x00, 0x10 # VirtualAddress: 0x1000
-    pe[0x158], pe[0x159] = 0x00, 0x02 # SizeOfRawData: 0x200
-    pe[0x15C], pe[0x15D] = 0x00, 0x02 # PointerToRawData: 0x200 (ファイル内のオフセット 512)
-    
-    # Characteristics: 0x60000020 (Code | Execute | Read)
-    pe[0x16C:0x170] = [0x20, 0x00, 0x00, 0x60] 
+    wstr(0x00, "MZ")
+    w32(0x3C, 0x40)
 
-    # === 6. Code Section ===
-    # ファイルオフセット 0x200 (512番目) にコードを配置
-    # アセンブリ:
-    # 31 C0 (xor eax, eax) -> 戻り値0
-    # C3    (ret)          -> 終了
-    pe[0x200], pe[0x201], pe[0x202] = 0x31, 0xC0, 0xC3
+    # === 2. COFF Header ===
+    wstr(0x40, "PE\0\0")
+    w16(0x44, 0x8664) # Machine: x86_64
+    w16(0x46, 3)      # Number of Sections (.text, .idata, .bss)
+    w16(0x54, 240)    # SizeOfOptionalHeader
+    w16(0x56, 0x0022) # Characteristics (Executable | LargeAddressAware)
 
-    # === バイナリエミッター ===
+    # === 3. Optional Header ===
+    w16(0x58, 0x020B) # Magic: PE32+
+    w32(0x68, 0x1000) # AddressOfEntryPoint (RVA to .text)
+    w32(0x74, 0x400000) # ImageBase
+    w32(0x78, 0x1000) # SectionAlignment
+    w32(0x7C, 0x200)  # FileAlignment
+    w16(0x80, 5)      # MajorOperatingSystemVersion
+    w16(0x88, 5)      # MajorSubsystemVersion
+    w32(0x90, 0x103000) # SizeOfImage (Headers + .text + .idata + 1MB .bss)
+    w32(0x94, 0x200)  # SizeOfHeaders
+    w16(0x9C, 3)      # Subsystem (Windows Console)
+    w32(0xC4, 16)     # NumberOfRvaAndSizes
+
+    # Data Directories (Import Directory)
+    w32(0xD0, 0x2000) # Import Directory RVA
+    w32(0xD4, 0x28)   # Import Directory Size
+
+    # === 4. Section Table ===
+    # .text (コード領域)
+    wstr(0x148, ".text")
+    w32(0x150, 0x1000) # VirtualSize
+    w32(0x154, 0x1000) # VirtualAddress
+    w32(0x158, 0x200)  # SizeOfRawData
+    w32(0x15C, 0x200)  # PointerToRawData
+    w32(0x16C, 0x60000020) # Characteristics (Code, Execute, Read)
+
+    # .idata (Windows API 解決領域)
+    wstr(0x170, ".idata")
+    w32(0x178, 0x1000)
+    w32(0x17C, 0x2000)
+    w32(0x180, 0x200)
+    w32(0x184, 0x400)
+    w32(0x194, 0x40000040) # Characteristics (Initialized Data, Read)
+
+    # .bss (1MBのテープ確保ハック！)
+    wstr(0x198, ".bss")
+    w32(0x1A0, 0x100000) # VirtualSize: 1MB
+    w32(0x1A4, 0x3000)   # VirtualAddress
+    w32(0x1A8, 0)        # SizeOfRawData: 0 (ファイルサイズを消費しない！)
+    w32(0x1AC, 0)        # PointerToRawData: 0
+    w32(0x1BC, 0xC0000080) # Characteristics (Uninitialized Data, Read, Write)
+
+    # === 5. Code Section (.text) ===
+    # IATを使って "H" を出力するx86_64アセンブリ
+    code = [
+        0x48, 0x83, 0xEC, 0x28,                         # sub rsp, 40 (Shadow Space確保)
+        
+        # GetStdHandle(-11) -> StdOutハンドルの取得
+        0x48, 0xC7, 0xC1, 0xF5, 0xFF, 0xFF, 0xFF,       # mov rcx, -11
+        0x48, 0xC7, 0xC0, 0x60, 0x20, 0x40, 0x00,       # mov rax, 0x402060 (IAT: GetStdHandle)
+        0xFF, 0x10,                                     # call [rax]
+        0x48, 0x89, 0xC3,                               # mov rbx, rax (ハンドルを保存)
+
+        # WriteFile(hConsole, buffer, 1, &written, NULL)
+        0xC6, 0x44, 0x24, 0x30, 0x48,                   # mov byte ptr [rsp+48], 'H'
+        0x48, 0x89, 0xD1,                               # mov rcx, rbx
+        0x48, 0x8D, 0x54, 0x24, 0x30,                   # lea rdx, [rsp+48]
+        0x49, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00,       # mov r8, 1
+        0x4C, 0x8D, 0x4C, 0x24, 0x38,                   # lea r9, [rsp+56]
+        0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00, # mov qword ptr [rsp+32], 0
+        0x48, 0xC7, 0xC0, 0x68, 0x20, 0x40, 0x00,       # mov rax, 0x402068 (IAT: WriteFile)
+        0xFF, 0x10,                                     # call [rax]
+
+        # ExitProcess(0)
+        0x48, 0xC7, 0xC1, 0x00, 0x00, 0x00, 0x00,       # mov rcx, 0
+        0x48, 0xC7, 0xC0, 0x70, 0x20, 0x40, 0x00,       # mov rax, 0x402070 (IAT: ExitProcess)
+        0xFF, 0x10                                      # call [rax]
+    ]
+    pe[0x200:0x200+len(code)] = bytes(code)
+
+    # === 6. IAT Section (.idata) ===
+    w32(0x400, 0x2028) # INT RVA
+    w32(0x40C, 0x2050) # Name RVA ("KERNEL32.dll")
+    w32(0x410, 0x2060) # IAT RVA
+    # INT
+    w64(0x428, 0x2080); w64(0x430, 0x20A0); w64(0x438, 0x20C0)
+    # Name
+    wstr(0x450, "KERNEL32.dll\0")
+    # IAT
+    w64(0x460, 0x2080); w64(0x468, 0x20A0); w64(0x470, 0x20C0)
+    # Hint/Names
+    wstr(0x482, "GetStdHandle\0"); wstr(0x4A2, "WriteFile\0"); wstr(0x4C2, "ExitProcess\0")
+
+    # === 7. 究極の超高速BFエミッター ===
+    # 差分だけを計算して1つのセルだけで全バイナリを出力するハック
+    curr = 0
     for b in pe:
-        move_to(20)
-        e("[-]")
-        if b > 0:
-            e("+" * b)
-        e(".")
+        diff = b - curr
+        if diff > 0: sys.stdout.write("+" * diff)
+        elif diff < 0: sys.stdout.write("-" * (-diff))
+        sys.stdout.write(".")
+        curr = b
 
 if __name__ == "__main__":
     build_dummy_pe()
