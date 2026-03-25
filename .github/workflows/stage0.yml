@@ -205,10 +205,10 @@ jobs:
       with:
         name: windows-spaces-binaries
         path: |
-          *.log
-          *.txt
-          *.spaces
-          *.bf
-          *.c
-          *.py
-          *.exe
+          **/*.log
+          **/*.txt
+          **/*.spaces
+          **/*.bf
+          **/*.c
+          **/*.py
+          **/*.exe
