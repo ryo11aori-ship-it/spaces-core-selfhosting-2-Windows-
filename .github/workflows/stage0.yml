@@ -78,6 +78,20 @@ jobs:
         if ! grep -q "B" output_loop.txt; then exit 1; fi
         echo "✅ Functional tests passed flawlessly via Wine."
 
+    - name: 3.5. Forge Native Spaces REPL
+      run: |
+        echo "--- Forging Pure Spaces REPL ---"
+        # 1. REPLのDNA(Brainfuck)を生成
+        python3 tools/gen_repl_bf.py > src/repl.bf
+        
+        # 2. BrainfuckをSpaces言語(空白のみ)に変換
+        python3 tools/bf_to_spaces.py src/repl.bf > src/repl.spaces
+        
+        # 3. 汎用コンパイラ自身にREPLをコンパイルさせる！
+        wine ./compiler.exe < src/repl.spaces > repl.exe
+        
+        echo "✅ Pure Spaces REPL was successfully compiled to repl.exe!"
+
     - name: 4. Prove Semantic Stability (Fixed-Point Ouroboros)
       run: |
         echo "--- Self-Replication (Gen 2 and Gen 3) ---"
