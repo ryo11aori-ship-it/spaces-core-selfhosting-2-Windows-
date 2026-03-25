@@ -34,12 +34,14 @@ jobs:
         echo "Hexdump of the generated PE file:"
         hexdump -C compiler.exe | head -n 25
 
-    - name: 5. The Ultimate Test (Wine Execution)
+    - name: 5. The Ultimate Test (Windows API via Wine)
       run: |
         echo "=== Executing compiler.exe via Wine ==="
         export WINEDEBUG=-all
         
-        # 'wine64' ではなく 'wine' で実行
-        wine ./compiler.exe
+        wine ./compiler.exe > output.txt
+        echo "Output from Windows PE:"
+        cat output.txt
         
-        echo "✅ Wine accepted the PE executable! Exit code: $?"
+        if ! grep -q "H" output.txt; then echo "❌ Failed to call Windows API!"; exit 1; fi
+        echo "✅ SUCCESS! Windows API (kernel32.dll) successfully invoked by hand-crafted PE!"
