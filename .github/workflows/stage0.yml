@@ -158,9 +158,9 @@ jobs:
     - name: 7. Prove G - The Absolute Vacuum (Clean WINEPREFIX)
       run: |
         echo "=== Running Compiler in a Total Filesystem Vacuum ==="
-        export WINEPREFIX=/tmp/empty_wine_env
+        # 🚀 修正: /tmp ではなく、確実に権限を持っているワークスペース内に隔離環境を作る
+        export WINEPREFIX=$PWD/empty_wine_env
         
-        # 🚀 修正: winebootコマンドを削除。wine自身に空の環境を自動構築させる
         wine ./compiler.exe < src/compiler.spaces > empty_world_out.exe
         
         VACUUM_HASH=$(sha256sum empty_world_out.exe | awk '{print $1}')
