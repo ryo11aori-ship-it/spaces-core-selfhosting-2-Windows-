@@ -12,25 +12,22 @@ jobs:
       run: |
         sudo dpkg --add-architecture i386
         sudo apt-get update
-        # Wine (Windows互換レイヤー) と、Cコンパイラ (オラクル用) をインストール
-        sudo apt-get install -y wine64 wine32 gcc python3
+        # 確実なWineパッケージのインストール
+        sudo apt-get install -y wine gcc python3
 
     - name: 2. Forge the Windows DNA
       run: |
         mkdir -p src spaces/self bin
-        # 新しいDNA (PEヘッダジェネレータ) をSpaces言語に変換
         python3 tools/gen_spaces_compiler_bf_bundler.py > src/compiler_spaces_reader.bf
         python3 tools/bf_to_spaces.py src/compiler_spaces_reader.bf > src/compiler.spaces
 
     - name: 3. Compile the Oracle VM
       run: |
-        # 今まで通りのC言語VMをコンパイル (実行エンジンとして使用)
         gcc -O3 src/ref/vm.c -o bin/ref_vm_gcc
 
     - name: 4. Birth of the Windows Executable
       run: |
         echo "=== Emitting Windows PE Binary (compiler.exe) ==="
-        # C言語VMに新しいDNAを読ませ、1024バイトの compiler.exe を出力させる
         ./bin/ref_vm_gcc src/compiler.spaces < src/compiler.spaces > compiler.exe
         chmod +x compiler.exe
         
@@ -40,10 +37,9 @@ jobs:
     - name: 5. The Ultimate Test (Wine Execution)
       run: |
         echo "=== Executing compiler.exe via Wine ==="
-        # ログを綺麗にするためWineのデバッグ出力をオフ
         export WINEDEBUG=-all
         
-        # 運命の瞬間。Linux上でWindowsアプリを実行する
-        wine64 ./compiler.exe
+        # 'wine64' ではなく 'wine' で実行
+        wine ./compiler.exe
         
         echo "✅ Wine accepted the PE executable! Exit code: $?"
