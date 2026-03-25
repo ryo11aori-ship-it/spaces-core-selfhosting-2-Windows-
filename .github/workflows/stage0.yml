@@ -34,14 +34,22 @@ jobs:
         echo "Hexdump of the generated PE file:"
         hexdump -C compiler.exe | head -n 25
 
-    - name: 5. The Ultimate Test (Windows API via Wine)
+    - name: 5. The Ultimate Test (Windows Spaces Compilation)
       run: |
         echo "=== Executing compiler.exe via Wine ==="
         export WINEDEBUG=-all
         
-        wine ./compiler.exe > output.txt
-        echo "Output from Windows PE:"
-        cat output.txt
+        # 1. コンパイラ自身に、テスト用のSpacesコードをコンパイルさせる
+        python3 tools/bf_to_spaces.py <(echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++.") > test_A.spaces
+        wine ./compiler.exe < test_A.spaces > test_A.exe
+        chmod +x test_A.exe
         
-        if ! grep -q "H" output.txt; then echo "❌ Failed to call Windows API!"; exit 1; fi
-        echo "✅ SUCCESS! Windows API (kernel32.dll) successfully invoked by hand-crafted PE!"
+        # 2. 生成されたWindowsバイナリを実行する！
+        wine ./test_A.exe > output_A.txt
+        echo "Output from test_A.exe:"
+        cat output_A.txt
+        
+        if ! grep -q "A" output_A.txt; then echo "❌ Compilation or Execution failed!"; exit 1; fi
+        echo "✅ SUCCESS! Spaces code was compiled to Windows PE natively, and ran flawlessly!"
+
+    
