@@ -1,96 +1,198 @@
 import sys
 
-def build_dummy_pe():
-    # 3セクター分 (1536バイト) の空のバイナリ配列
-    pe = bytearray(1536)
+ptr = 0
 
+def e(s):
+    sys.stdout.write(s)
+
+def move_to(target):
+    global ptr
+    if target > ptr: e(">" * (target - ptr))
+    if target < ptr: e("<" * (ptr - target))
+    ptr = target
+
+def set_val(addr, val):
+    move_to(addr); e("[-]"); e("+" * val)
+
+def sub_val(addr, val):
+    move_to(addr); e("-" * val)
+
+def copy(src, dst, tmp):
+    move_to(tmp); e("[-]"); move_to(dst); e("[-]")
+    move_to(src); e("["); move_to(dst); e("+"); move_to(tmp); e("+"); move_to(src); e("-"); e("]")
+    move_to(tmp); e("["); move_to(src); e("+"); move_to(tmp); e("-"); e("]")
+
+def if_zero(var_addr, flag_addr, callback):
+    set_val(flag_addr, 1)
+    move_to(var_addr); e("["); set_val(flag_addr, 0); move_to(var_addr); e("[-]"); e("]")
+    move_to(flag_addr); e("[")
+    callback()
+    set_val(flag_addr, 0); e("]")
+
+def shift_and_add(buf_addr, val_addr, tmp1, tmp2):
+    move_to(tmp1); e("[-]")
+    move_to(buf_addr); e("["); move_to(tmp1); e("+"); move_to(buf_addr); e("-"); e("]")
+    move_to(tmp1); e("["); move_to(buf_addr); e("++"); move_to(tmp1); e("-"); e("]")
+    copy(val_addr, tmp1, tmp2)
+    move_to(tmp1); e("["); move_to(buf_addr); e("+"); move_to(tmp1); e("-"); e("]")
+
+def emit_header():
+    # === 1. PEヘッダの構築 ===
+    pe = bytearray(1536)
     def w32(offset, val): pe[offset:offset+4] = val.to_bytes(4, 'little')
     def w64(offset, val): pe[offset:offset+8] = val.to_bytes(8, 'little')
     def w16(offset, val): pe[offset:offset+2] = val.to_bytes(2, 'little')
     def wstr(offset, s):  pe[offset:offset+len(s)] = s.encode('ascii')
 
-    # === 1. MS-DOS Header ===
-    wstr(0x00, "MZ")
-    w32(0x3C, 0x40)
-
-    # === 2. COFF Header ===
-    wstr(0x40, "PE\0\0")
-    w16(0x44, 0x8664) # Machine: x86_64
-    w16(0x46, 3)      # Number of Sections (.text, .idata, .bss)
-    w16(0x54, 240)    # SizeOfOptionalHeader
-    w16(0x56, 0x0022) # Characteristics (Executable | LargeAddressAware)
-
-    # === 3. Optional Header ===
-    w16(0x58, 0x020B) # Magic: PE32+
-    w32(0x68, 0x1000) # AddressOfEntryPoint
-    w32(0x74, 0x400000) # ImageBase
-    w32(0x78, 0x1000) # SectionAlignment
-    w32(0x7C, 0x200)  # FileAlignment
-    w16(0x80, 5); w16(0x88, 5) # OS Version
-    w32(0x90, 0x103000) # SizeOfImage
-    w32(0x94, 0x200)  # SizeOfHeaders
-    w16(0x9C, 3)      # Subsystem (Windows Console)
-    w32(0xC4, 16)     # NumberOfRvaAndSizes
-
-    # Import Directory RVA & Size
+    wstr(0x00, "MZ"); w32(0x3C, 0x40)
+    wstr(0x40, "PE\0\0"); w16(0x44, 0x8664); w16(0x46, 4) # 4 Sections
+    w16(0x54, 240); w16(0x56, 0x0022)
+    w16(0x58, 0x020B); w32(0x68, 0x1000); w32(0x74, 0x400000)
+    w32(0x78, 0x1000); w32(0x7C, 0x200)
+    w16(0x80, 5); w16(0x88, 5)
+    w32(0x90, 0x104000); w32(0x94, 0x200); w16(0x9C, 3); w32(0xC4, 16)
     w32(0xD0, 0x2000); w32(0xD4, 0x28)
+
+    # .text (コード)
+    wstr(0x148, ".text"); w32(0x150, 0x1000); w32(0x154, 0x1000)
+    w32(0x158, 0x200); w32(0x15C, 0x200); w32(0x16C, 0x60000020)
+    # .idata (IAT)
+    wstr(0x170, ".idata"); w32(0x178, 0x1000); w32(0x17C, 0x2000)
+    w32(0x180, 0x200); w32(0x184, 0x400); w32(0x194, 0xC0000040)
+    # .bss (1MBテープ)
+    wstr(0x198, ".bss"); w32(0x1A0, 0x100000); w32(0x1A4, 0x3000)
+    w32(0x1BC, 0xC0000080)
+    # .space (追記されるソースコード)
+    wstr(0x1C0, ".space"); w32(0x1C8, 0x100000); w32(0x1CC, 0x103000)
+    w32(0x1D0, 0x100000); w32(0x1D4, 0x600); w32(0x1E4, 0x40000040)
+
+    # IATの構築 (putchar, getchar, exit)
+    w32(0x400, 0x2028); w32(0x40C, 0x2050); w32(0x410, 0x2060)
+    w64(0x428, 0x2080); w64(0x430, 0x20A0); w64(0x438, 0x20C0)
+    wstr(0x450, "msvcrt.dll\0")
+    w64(0x460, 0x2080); w64(0x468, 0x20A0); w64(0x470, 0x20C0)
+    wstr(0x482, "putchar\0"); wstr(0x4A2, "getchar\0"); wstr(0x4C2, "exit\0")
+
+    # === 2. 超絶ハック：x86_64 ミニ・アセンブラ ===
+    code = bytearray()
+    labels = {}; fixups = []
     
-    # IAT Directory RVA & Size (念のため明示的に指定)
-    w32(0x118, 0x2060); w32(0x11C, 0x18)
+    def asm(*bs): code.extend(bs)
+    def label(n): labels[n] = len(code)
+    def jmp_rel8(op, n):
+        asm(*op); fixups.append((len(code), n, 1)); asm(0)
+    def jmp_rel32(op, n):
+        asm(*op); fixups.append((len(code), n, 4)); asm(0,0,0,0)
+    def call_iat(rva):
+        rip_rva = 0x1000 + len(code) + 6
+        offset = (rva - rip_rva) & 0xFFFFFFFF
+        asm(0xFF, 0x15, *offset.to_bytes(4, 'little'))
 
-    # === 4. Section Table ===
-    wstr(0x148, ".text")
-    w32(0x150, 0x1000); w32(0x154, 0x1000)
-    w32(0x158, 0x200);  w32(0x15C, 0x200)
-    w32(0x16C, 0x60000020) # Code, Execute, Read
+    # r12 = テープへのポインタ (.bss) / r13 = 命令へのポインタ (.space)
+    asm(0x4C, 0x8D, 0x25); call_iat(0x3000 - 6 + len(code)) # lea r12, [rip+...]
+    asm(0x4C, 0x8D, 0x2D); call_iat(0x103000 - 6 + len(code)) # lea r13, [rip+...]
+    asm(0x48, 0x83, 0xEC, 0x28) # sub rsp, 40 (Shadow Space)
 
-    wstr(0x170, ".idata")
-    w32(0x178, 0x1000); w32(0x17C, 0x2000)
-    w32(0x180, 0x200);  w32(0x184, 0x400)
-    w32(0x194, 0xC0000040) # Init Data, Read, Write
+    label('loop')
+    asm(0x41, 0x0F, 0xB6, 0x45, 0x00) # movzx eax, byte [r13]
+    asm(0x49, 0xFF, 0xC5)             # inc r13
+    asm(0x84, 0xC0)                   # test al, al (EOF=0)
+    jmp_rel32([0x0F, 0x84], 'exit')
 
-    # .bss (1MBテープハック)
-    wstr(0x198, ".bss")
-    w32(0x1A0, 0x100000); w32(0x1A4, 0x3000)
-    w32(0x1BC, 0xC0000080) # Uninit Data, Read, Write
+    # オペコード 1-8 へのディスパッチ (1:>, 2:<, 3:+, 4:-, 5:., 6:,, 7:[, 8:])
+    asm(0x3C, 0x01); jmp_rel8([0x75], 'c2'); asm(0x49, 0xFF, 0xC4); jmp_rel32([0xE9], 'loop')
+    label('c2')
+    asm(0x3C, 0x02); jmp_rel8([0x75], 'c3'); asm(0x49, 0xFF, 0xCC); jmp_rel32([0xE9], 'loop')
+    label('c3')
+    asm(0x3C, 0x03); jmp_rel8([0x75], 'c4'); asm(0x41, 0xFE, 0x04, 0x24); jmp_rel32([0xE9], 'loop')
+    label('c4')
+    asm(0x3C, 0x04); jmp_rel8([0x75], 'c5'); asm(0x41, 0xFE, 0x0C, 0x24); jmp_rel32([0xE9], 'loop')
+    label('c5')
+    asm(0x3C, 0x05); jmp_rel8([0x75], 'c6'); asm(0x41, 0x0F, 0xB6, 0x0C, 0x24) # putchar
+    call_iat(0x2060); jmp_rel32([0xE9], 'loop')
+    label('c6')
+    asm(0x3C, 0x06); jmp_rel8([0x75], 'c7'); call_iat(0x2068) # getchar
+    asm(0x83, 0xF8, 0xFF); jmp_rel8([0x75], 's_c'); asm(0x31, 0xC0) # EOF=-1回避
+    label('s_c'); asm(0x41, 0x88, 0x04, 0x24); jmp_rel32([0xE9], 'loop')
+    
+    # 難関：ループ処理 [ と ]
+    label('c7')
+    asm(0x3C, 0x07); jmp_rel8([0x75], 'c8')
+    asm(0x41, 0x80, 0x3C, 0x24, 0x00); jmp_rel32([0x0F, 0x85], 'loop')
+    asm(0xBA, 0x01, 0x00, 0x00, 0x00) # edx = 1
+    label('f_r')
+    asm(0x41, 0x0F, 0xB6, 0x45, 0x00); asm(0x49, 0xFF, 0xC5)
+    asm(0x3C, 0x07); jmp_rel8([0x75], 'n_l'); asm(0xFF, 0xC2)
+    label('n_l')
+    asm(0x3C, 0x08); jmp_rel8([0x75], 'e_r'); asm(0xFF, 0xCA)
+    label('e_r'); asm(0x85, 0xD2); jmp_rel32([0x0F, 0x85], 'f_r'); jmp_rel32([0xE9], 'loop')
+    
+    label('c8')
+    asm(0x3C, 0x08); jmp_rel32([0x0F, 0x85], 'loop')
+    asm(0x41, 0x80, 0x3C, 0x24, 0x00); jmp_rel32([0x0F, 0x84], 'loop')
+    asm(0xBA, 0x01, 0x00, 0x00, 0x00); asm(0x49, 0x83, 0xED, 0x02) # edx=1, r13-=2
+    label('f_l')
+    asm(0x41, 0x0F, 0xB6, 0x45, 0x00); asm(0x49, 0xFF, 0xCD)
+    asm(0x3C, 0x08); jmp_rel8([0x75], 'n_r'); asm(0xFF, 0xC2)
+    label('n_r')
+    asm(0x3C, 0x07); jmp_rel8([0x75], 'e_l'); asm(0xFF, 0xCA)
+    label('e_l'); asm(0x85, 0xD2); jmp_rel32([0x0F, 0x85], 'f_l')
+    asm(0x49, 0x83, 0xC5, 0x02); jmp_rel32([0xE9], 'loop') # r13+=2
 
-    # === 5. Code Section (.text) ===
-    # 🚀 msvcrt.dll の putchar('H') を呼ぶ究極にシンプルなアセンブリ
-    code = [
-        0x48, 0x83, 0xEC, 0x28,             # sub rsp, 40 (Shadow Spaceの確保)
-        
-        0xB9, 0x48, 0x00, 0x00, 0x00,       # mov ecx, 72 ('H')
-        0xFF, 0x15, 0x51, 0x10, 0x00, 0x00, # call [rip+0x1051] -> putchar
-        
-        0x31, 0xC9,                         # xor ecx, ecx (戻り値 0)
-        0xFF, 0x15, 0x51, 0x10, 0x00, 0x00  # call [rip+0x1051] -> exit
-    ]
+    label('exit')
+    asm(0x31, 0xC9); call_iat(0x2070) # exit(0)
+
+    # アドレス解決
+    for offset, name, size in fixups:
+        target = labels[name]
+        rel = target - (offset + size)
+        code[offset:offset+size] = rel.to_bytes(size, 'little', signed=True)
+
     pe[0x200:0x200+len(code)] = bytes(code)
 
-    # === 6. IAT Section (.idata) ===
-    w32(0x400, 0x2028) # INT RVA
-    w32(0x40C, 0x2050) # Name RVA
-    w32(0x410, 0x2060) # IAT RVA
-    
-    # INT (Import Name Table)
-    w64(0x428, 0x2080); w64(0x430, 0x20A0)
-    # Target DLL Name
-    wstr(0x450, "msvcrt.dll\0")
-    # IAT (Import Address Table)
-    w64(0x460, 0x2080); w64(0x468, 0x20A0)
-    # Hint & Names
-    wstr(0x482, "putchar\0"); wstr(0x4A2, "exit\0")
-
-    # === 7. 超高速BFエミッター ===
+    # === 3. 超高速エミッターの実行 ===
     curr = 0
     for b in pe:
         diff = (b - curr) % 256
         if diff > 128: diff -= 256
-        
-        if diff > 0: sys.stdout.write("+" * diff)
-        elif diff < 0: sys.stdout.write("-" * (-diff))
-        sys.stdout.write(".")
+        if diff > 0: e("+" * diff)
+        elif diff < 0: e("-" * (-diff))
+        e(".")
         curr = b
 
+def build_parser():
+    # 1. 最初にPEヘッダ＆実行エンジンを出力する
+    emit_header()
+    
+    # 2. ここから先はSpacesコードを解読してオペコード(1-8)を追記していくロジック
+    set_val(2, 0); set_val(3, 0)
+    move_to(1); e(","); e("[")
+    
+    set_val(4, 0); set_val(5, 0)
+    
+    copy(1, 6, 7); sub_val(6, 32)
+    def on_space():
+        set_val(4, 1); set_val(5, 0)
+    if_zero(6, 8, on_space)
+    
+    copy(1, 6, 7); sub_val(6, 227)
+    def on_full():
+        e("[-],[-],")
+        set_val(4, 1); set_val(5, 1)
+    if_zero(6, 8, on_full)
+    
+    move_to(4); e("[")
+    shift_and_add(3, 5, 6, 7)
+    move_to(2); e("+")
+    
+    copy(2, 6, 7); sub_val(6, 3)
+    def on_3bits():
+        move_to(3); e("+.") # 0-7を1-8にシフトして出力！ (アセンブリ側も1-8で解釈)
+        set_val(2, 0); set_val(3, 0)
+    if_zero(6, 8, on_3bits)
+    
+    set_val(4, 0); e("]")
+    move_to(1); e("[-],"); e("]")
+
 if __name__ == "__main__":
-    build_dummy_pe()
+    build_parser()
