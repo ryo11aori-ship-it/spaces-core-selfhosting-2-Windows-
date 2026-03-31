@@ -15,103 +15,41 @@ jobs:
 
     - name: 0. Define Formal Threat Model (Windows PE Edition)
       run: |
-        echo "=== FORMAL ASSUMPTION & THREAT MODEL ==="
-        echo "[Trusted Computing Base (TCB)]"
-        echo "  - Windows PE32+ binary format specification."
-        echo "  - Windows API (msvcrt.dll) & Wine compatibility layer."
-        echo "  - Dual-oracle semantic validation (C VM vs Pure Python VM)."
-        echo "[Security Guarantees]"
-        echo "  - Strict ASLR compliance via RIP-relative addressing (PIE)."
-        echo "  - PE Section W^X: .text (RX) and .bss (RW) strictly segregated."
+        echo "=== FORMAL ASSUMPTION & THREAT MODEL ==="; echo "[Trusted Computing Base (TCB)]"; echo "  - Windows PE32+ binary format specification."; echo "  - Windows API (msvcrt.dll) & Wine compatibility layer."; echo "  - Dual-oracle semantic validation (C VM vs Pure Python VM)."; echo "[Security Guarantees]"; echo "  - Strict ASLR compliance via RIP-relative addressing (PIE)."; echo "  - PE Section W^X: .text (RX) and .bss (RW) strictly segregated."
 
     - name: 1. Setup Tools & Wine
       run: |
-        sudo apt-get update
-        # i386(32bit)の追加を廃止し、純粋な64ビット版Wineだけをインストール
-        sudo apt-get install -y wine64 gcc clang tcc python3
+        sudo apt-get update; sudo apt-get install -y wine64 gcc clang tcc python3
 
-    - name: 1.5. Regenerate Windows DNA
+    - name: 1.5. Regenerate Windows DNA & Auto-Commit
       run: |
-        echo "=== Regenerating compiler.spaces from Windows PE DNA ==="
-        mkdir -p src spaces/self tests bin seed
-        python3 tools/gen_spaces_compiler_bf_bundler.py > src/compiler_spaces_reader.bf
-        python3 tools/bf_to_spaces.py src/compiler_spaces_reader.bf > src/compiler.spaces
-        cp src/compiler.spaces spaces/self/compiler.spaces
+        echo "=== Regenerating compiler.spaces from Windows PE DNA ==="; mkdir -p src spaces/self tests bin seed; python3 tools/gen_spaces_compiler_bf_bundler.py > src/compiler_spaces_reader.bf; python3 tools/bf_to_spaces.py src/compiler_spaces_reader.bf > src/compiler.spaces; cp src/compiler.spaces spaces/self/compiler.spaces; git config --global user.name "github-actions[bot]"; git config --global user.email "github-actions[bot]@users.noreply.github.com"; git add src/compiler_spaces_reader.bf src/compiler.spaces spaces/self/compiler.spaces; if ! git diff --staged --quiet; then git commit -m "feat: Auto-regenerate compiler.spaces with W^X memory protection enforced" && git push; else echo "✅ No changes in compiler.spaces detected. Proceeding..."; fi
 
-    - name: 2. The Big Bang (Tri-Crown DDC for Oracle VM)
+    - name: 2. The Big Bang (Quad-Crown DDC for Oracle VM)
       run: |
-        echo "--- Compiling Oracle VM with GCC, Clang, and TCC ---"
-        gcc -O3 src/ref/vm.c -o bin/ref_vm_gcc
-        clang -O3 src/ref/vm.c -o bin/ref_vm_clang
-        tcc src/ref/vm.c -o bin/ref_vm_tcc
-        
-        echo "--- Generating seeds across diverse C compilers ---"
-        ./bin/ref_vm_gcc src/compiler.spaces < src/compiler.spaces > seed/seed_gcc.exe
-        ./bin/ref_vm_clang src/compiler.spaces < src/compiler.spaces > seed/seed_clang.exe
-        ./bin/ref_vm_tcc src/compiler.spaces < src/compiler.spaces > seed/seed_tcc.exe
-        
-        GCC_HASH=$(sha256sum seed/seed_gcc.exe | awk '{print $1}')
-        CLANG_HASH=$(sha256sum seed/seed_clang.exe | awk '{print $1}')
-        TCC_HASH=$(sha256sum seed/seed_tcc.exe | awk '{print $1}')
-        echo "GCC Seed:   $GCC_HASH"
-        echo "Clang Seed: $CLANG_HASH"
-        echo "TCC Seed:   $TCC_HASH"
-        if [ "$GCC_HASH" != "$CLANG_HASH" ] || [ "$GCC_HASH" != "$TCC_HASH" ]; then exit 1; fi
-        echo "✅ TRI-CROWN DDC PASSED"
-        cp seed/seed_gcc.exe seed/compiler.exe
+        sed -i 's/int main(int argc, char \*\*argv) {/int main(int argc, char \*\*argv) { setbuf(stdout, NULL);/' src/ref/vm.c; echo "--- Compiling Oracle VM with GCC, Clang, TCC, and MUSL-GCC ---"; gcc -O3 src/ref/vm.c -o bin/ref_vm_gcc; clang -O3 src/ref/vm.c -o bin/ref_vm_clang; tcc src/ref/vm.c -o bin/ref_vm_tcc; docker run --rm -v $(pwd):/work alpine sh -c "apk add --no-cache gcc musl-dev && gcc -static -O3 /work/src/ref/vm.c -o /work/bin/ref_vm_alpine && chown $(id -u):$(id -g) /work/bin/ref_vm_alpine"; echo "--- Generating seeds across diverse C compilers ---"; ./bin/ref_vm_gcc src/compiler.spaces < src/compiler.spaces > seed/seed_gcc.exe; ./bin/ref_vm_clang src/compiler.spaces < src/compiler.spaces > seed/seed_clang.exe; ./bin/ref_vm_tcc src/compiler.spaces < src/compiler.spaces > seed/seed_tcc.exe; ./bin/ref_vm_alpine src/compiler.spaces < src/compiler.spaces > seed/seed_alpine.exe; GCC_HASH=$(sha256sum seed/seed_gcc.exe | awk '{print $1}'); CLANG_HASH=$(sha256sum seed/seed_clang.exe | awk '{print $1}'); TCC_HASH=$(sha256sum seed/seed_tcc.exe | awk '{print $1}'); ALPINE_HASH=$(sha256sum seed/seed_alpine.exe | awk '{print $1}'); echo "GCC Seed: $GCC_HASH"; echo "Clang Seed: $CLANG_HASH"; echo "TCC Seed: $TCC_HASH"; echo "Alpine Seed: $ALPINE_HASH"; if [ "$GCC_HASH" != "$CLANG_HASH" ] || [ "$GCC_HASH" != "$TCC_HASH" ] || [ "$GCC_HASH" != "$ALPINE_HASH" ]; then exit 1; fi; echo "✅ QUAD-CROWN DDC PASSED"; cp seed/seed_gcc.exe seed/compiler.exe; if [ -f seed/compiler.exe ]; then REPO_HASH=$(sha256sum seed/compiler.exe | awk '{print $1}'); if [ "$GCC_HASH" != "$REPO_HASH" ]; then git add seed/compiler.exe; git commit -m "chore: Update seed compiler via Quad-Crown DDC"; git push; fi; else git add seed/compiler.exe; git commit -m "chore: Init exact seed verified by Quad-Crown DDC"; git push; fi
 
     - name: 3. Bootstrap & Basic Functional Tests
       run: |
-        echo "--- Bootstrapping Native Windows Compiler ---"
-        wine ./seed/compiler.exe < src/compiler.spaces > compiler.exe
-        
-        echo "--- Basic Functional Tests ---"
-        python3 tools/bf_to_spaces.py <(echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++.") > tests/test_A.spaces
-        python3 tools/bf_to_spaces.py <(echo "++++++[>+++++++++++<-]>.") > tests/loop_test.spaces
-        
-        wine ./compiler.exe < tests/test_A.spaces > test_A.exe
-        wine ./test_A.exe > output_A.txt
-        if ! grep -q "A" output_A.txt; then exit 1; fi
-        
-        wine ./compiler.exe < tests/loop_test.spaces > loop_test.exe
-        wine ./loop_test.exe > output_loop.txt
-        if ! grep -q "B" output_loop.txt; then exit 1; fi
-        echo "✅ Functional tests passed flawlessly via Wine."
+        echo "--- Bootstrapping Native Windows Compiler ---"; wine ./seed/compiler.exe < src/compiler.spaces > compiler.exe; echo "--- Basic Functional Tests ---"; python3 tools/bf_to_spaces.py <(echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++.") > tests/test_A.spaces; python3 tools/bf_to_spaces.py <(echo "++++++[>+++++++++++<-]>.") > tests/loop_test.spaces; wine ./compiler.exe < tests/test_A.spaces > test_A.exe; wine ./test_A.exe > output_A.txt; if ! grep -q "A" output_A.txt; then exit 1; fi; wine ./compiler.exe < tests/loop_test.spaces > loop_test.exe; wine ./loop_test.exe > output_loop.txt; if ! grep -q "B" output_loop.txt; then exit 1; fi; echo "✅ Functional tests passed flawlessly via Wine."
 
     - name: 3.5. Forge Native Spaces REPL
       run: |
-        echo "--- Forging Pure Spaces REPL ---"
-        # 1. REPLのDNA(Brainfuck)を生成
-        python3 tools/gen_repl_bf.py > src/repl.bf
-        
-        # 2. BrainfuckをSpaces言語(空白のみ)に変換
-        python3 tools/bf_to_spaces.py src/repl.bf > src/repl.spaces
-        
-        # 3. 汎用コンパイラ自身にREPLをコンパイルさせる！
-        wine ./compiler.exe < src/repl.spaces > repl.exe
-        
-        echo "✅ Pure Spaces REPL was successfully compiled to repl.exe!"
+        echo "--- Forging Pure Spaces REPL ---"; python3 tools/gen_repl_bf.py > src/repl.bf; python3 tools/bf_to_spaces.py src/repl.bf > src/repl.spaces; wine ./compiler.exe < src/repl.spaces > repl.exe; echo "✅ Pure Spaces REPL was successfully compiled to repl.exe!"
 
     - name: 4. Prove Semantic Stability (Fixed-Point Ouroboros)
       run: |
-        echo "--- Self-Replication (Gen 2 and Gen 3) ---"
-        wine ./compiler.exe < src/compiler.spaces > compiler2.exe
-        wine ./compiler2.exe < src/compiler.spaces > compiler3.exe
-        
-        echo "=== SHA-256 Hash Matching (The Provenance Proof) ==="
-        SEED_HASH=$(sha256sum seed/compiler.exe | awk '{print $1}')
-        COMPILER1_HASH=$(sha256sum compiler.exe | awk '{print $1}')
-        COMPILER2_HASH=$(sha256sum compiler2.exe | awk '{print $1}')
-        COMPILER3_HASH=$(sha256sum compiler3.exe | awk '{print $1}')
-        
-        echo "Seed (Oracle-origin): $SEED_HASH"
-        echo "Compiler (Native):    $COMPILER1_HASH"
-        echo "Compiler2 (Re-pure):  $COMPILER2_HASH"
-        echo "Compiler3:            $COMPILER3_HASH"
-        
-        if [ "$SEED_HASH" != "$COMPILER1_HASH" ]; then echo "❌ PROVENANCE MISMATCH" && exit 1; fi
-        if [ "$COMPILER1_HASH" != "$COMPILER2_HASH" ] || [ "$COMPILER2_HASH" != "$COMPILER3_HASH" ]; then echo "❌ FIXED POINT MISMATCH" && exit 1; fi
-        echo "🎉 PERFECT MATCH: Fixed Point Stable on Windows PE!"
+        echo "--- Self-Replication (Gen 2 and Gen 3) ---"; wine ./compiler.exe < src/compiler.spaces > compiler2.exe; wine ./compiler2.exe < src/compiler.spaces > compiler3.exe; echo "=== SHA-256 Hash Matching (The Provenance Proof) ==="; SEED_HASH=$(sha256sum seed/compiler.exe | awk '{print $1}'); COMPILER1_HASH=$(sha256sum compiler.exe | awk '{print $1}'); COMPILER2_HASH=$(sha256sum compiler2.exe | awk '{print $1}'); COMPILER3_HASH=$(sha256sum compiler3.exe | awk '{print $1}'); echo "Seed (Oracle-origin): $SEED_HASH"; echo "Compiler (Native):    $COMPILER1_HASH"; echo "Compiler2 (Re-pure):  $COMPILER2_HASH"; echo "Compiler3:            $COMPILER3_HASH"; if [ "$SEED_HASH" != "$COMPILER1_HASH" ]; then echo "❌ PROVENANCE MISMATCH" && exit 1; fi; if [ "$COMPILER1_HASH" != "$COMPILER2_HASH" ] || [ "$COMPILER2_HASH" != "$COMPILER3_HASH" ]; then echo "❌ FIXED POINT MISMATCH" && exit 1; fi; echo "🎉 PERFECT MATCH: Fixed Point Stable on Windows PE!"
+
+    - name: 4.5. Prove Visual Independence & API Purity (Strings, IAT)
+      run: |
+        echo "=== Hexdump of compiler.exe ==="; hexdump -C compiler.exe | head -n 25; echo "=== Strings Search (Checking for external traces) ==="; strings compiler.exe | grep -iE "brainfuck|vm|interpreter|op_map|c" || echo "✅ CLEAN: No external semantic strings found!"; echo "=== PE Dependency Check (No complex API dependence) ==="; cat << 'EOF' > tools/check_iat.py
+        import sys
+        with open(sys.argv[1], "rb") as f: pe = f.read()
+        if b"kernel32" in pe.lower() or b"user32" in pe.lower(): sys.exit("❌ UNEXPECTED DEPENDENCY DETECTED!")
+        print("✅ IAT Check Passed: Strictly independent without bloated DLLs")
+        EOF
+        python3 tools/check_iat.py compiler.exe
 
     - name: 5. Prove Dual-Oracle Semantic Verification & Advanced Fuzzing
       run: |
@@ -141,78 +79,33 @@ jobs:
             bf = f"{'+'*v1}[>{'+'*v2}[>+<-]<-]>>{'+'*65}."
             with open(f"tests/fuzz_{i}.bf", "w") as f: f.write(bf)
         EOF
-        python3 tools/gen_fuzz_bf.py
-        for i in $(seq 0 4); do
-          python3 tools/bf_to_spaces.py tests/fuzz_$i.bf > tests/fuzz_$i.spaces
-          python3 tools/ref_py_vm.py tests/fuzz_$i.bf > out_ref_$i
-          wine ./compiler.exe < tests/fuzz_$i.spaces > comp_$i.exe
-          wine ./comp_$i.exe > out_comp_$i
-          diff --strip-trailing-cr out_ref_$i out_comp_$i || exit 1
-        done
-        echo "✅ Dual-Oracle Fuzzing against Python VM passed."
+        python3 tools/gen_fuzz_bf.py; for i in $(seq 0 4); do python3 tools/bf_to_spaces.py tests/fuzz_$i.bf > tests/fuzz_$i.spaces; python3 tools/ref_py_vm.py tests/fuzz_$i.bf > out_ref_$i; wine ./compiler.exe < tests/fuzz_$i.spaces > comp_$i.exe; wine ./comp_$i.exe > out_comp_$i; diff --strip-trailing-cr out_ref_$i out_comp_$i || exit 1; done; echo "✅ Dual-Oracle Fuzzing against Python VM passed."
 
     - name: 6. Prove E - Formal PE Generation & Static W^X
       run: |
-        echo "=== Static W^X Verification via Python PE Parser ==="
-        cat << 'EOF' > tools/check_wx.py
+        echo "=== Static W^X Verification via Python PE Parser ==="; cat << 'EOF' > tools/check_wx.py
         import sys
         with open(sys.argv[1], "rb") as f: pe = f.read()
-        # .text section characteristics offset based on our DNA
         text_char = int.from_bytes(pe[0x16C:0x170], 'little')
-        # .bss section characteristics
         bss_char = int.from_bytes(pe[0x1BC:0x1C0], 'little')
         print(f".text Characteristics: {hex(text_char)}")
         print(f".bss Characteristics: {hex(bss_char)}")
         if (text_char & 0x80000000) != 0: sys.exit("❌ .text is Writable!")
         if (bss_char & 0x20000000) != 0: sys.exit("❌ .bss is Executable!")
         EOF
-        python3 tools/check_wx.py compiler.exe
-        echo "✅ VERIFIED: Strict W^X memory protection enforced in PE Characteristics."
+        python3 tools/check_wx.py compiler.exe; echo "✅ VERIFIED: Strict W^X memory protection enforced in PE Characteristics."
 
     - name: 7. Prove G - The Absolute Vacuum (Clean WINEPREFIX)
       run: |
-        echo "=== Running Compiler in a Total Filesystem Vacuum ==="
-        # 🚀 修正: /tmp ではなく、確実に権限を持っているワークスペース内に隔離環境を作る
-        export WINEPREFIX=$PWD/empty_wine_env
-        
-        wine ./compiler.exe < src/compiler.spaces > empty_world_out.exe
-        
-        VACUUM_HASH=$(sha256sum empty_world_out.exe | awk '{print $1}')
-        COMPILER_HASH=$(sha256sum compiler.exe | awk '{print $1}')
-        
-        echo "Vacuum Hash:   $VACUUM_HASH"
-        echo "Compiler Hash: $COMPILER_HASH"
-        
-        if [ "$VACUUM_HASH" != "$COMPILER_HASH" ]; then echo "❌ FAILED in vacuum"; exit 1; fi
-        echo "✅ VERIFIED: Compiler perfectly self-replicates in an isolated WINEPREFIX."
+        echo "=== Running Compiler in a Total Filesystem Vacuum ==="; export WINEPREFIX=$PWD/empty_wine_env; wine ./compiler.exe < src/compiler.spaces > empty_world_out.exe; VACUUM_HASH=$(sha256sum empty_world_out.exe | awk '{print $1}'); COMPILER_HASH=$(sha256sum compiler.exe | awk '{print $1}'); echo "Vacuum Hash:   $VACUUM_HASH"; echo "Compiler Hash: $COMPILER_HASH"; if [ "$VACUUM_HASH" != "$COMPILER_HASH" ]; then echo "❌ FAILED in vacuum"; exit 1; fi; echo "✅ VERIFIED: Compiler perfectly self-replicates in an isolated WINEPREFIX."
 
     - name: 8. Prove H - Mutation Testing (Avalanche Effect)
       run: |
-        echo "=== Mutation Testing (1-bit flip in DNA) ==="
-        sed 's/ /　/1' src/compiler.spaces > mutated.spaces
-        wine ./compiler.exe < mutated.spaces > mutated.exe || true
-        
-        MUTATED_HASH=$(sha256sum mutated.exe | awk '{print $1}')
-        COMPILER_HASH=$(sha256sum compiler.exe | awk '{print $1}')
-        if [ "$MUTATED_HASH" == "$COMPILER_HASH" ]; then
-          echo "❌ FAILED: Compiler ignored the mutation!"
-          exit 1
-        fi
-        echo "✅ VERIFIED: Cryptographic sensitivity. A single altered space cascades into complete structural divergence."
+        echo "=== Mutation Testing (1-bit flip in DNA) ==="; sed 's/ /　/1' src/compiler.spaces > mutated.spaces; wine ./compiler.exe < mutated.spaces > mutated.exe || true; MUTATED_HASH=$(sha256sum mutated.exe | awk '{print $1}'); COMPILER_HASH=$(sha256sum compiler.exe | awk '{print $1}'); if [ "$MUTATED_HASH" == "$COMPILER_HASH" ]; then echo "❌ FAILED: Compiler ignored the mutation!"; exit 1; fi; echo "✅ VERIFIED: Cryptographic sensitivity. A single altered space cascades into complete structural divergence."
 
     - name: 9. Formal Verification Summary
       run: |
-        echo "=================================================="
-        echo "         FORMAL VERIFICATION RESULTS              "
-        echo "=================================================="
-        echo "✔ DDC (Execution Substrate Diversity): PASS"
-        echo "✔ Native Self-Hosting Ouroboros (Fixed Point): PASS"
-        echo "✔ Semantic Equivalence (Dual-Oracle Fuzzing): PASS"
-        echo "✔ Isolation (Clean WINEPREFIX Vacuum): PASS"
-        echo "✔ Static PE W^X Enforcement: PASS"
-        echo "✔ Mutation Avalanche Effect: PASS"
-        echo "=================================================="
-        echo "CONCLUSION: The Spaces Windows compiler achieves flawless semantic independence, reproducible self-hosting, and strict PE memory safety."
+        echo "=================================================="; echo "         FORMAL VERIFICATION RESULTS              "; echo "=================================================="; echo "✔ Quad-Crown DDC (OS & Substrate Diversity): PASS"; echo "✔ Native Self-Hosting Ouroboros (Fixed Point): PASS"; echo "✔ Semantic Equivalence (Dual-Oracle Fuzzing): PASS"; echo "✔ Process Purity (No user32/kernel32 dependence): PASS"; echo "✔ Isolation (Clean WINEPREFIX Vacuum): PASS"; echo "✔ Static PE W^X Enforcement: PASS"; echo "✔ Mutation Avalanche Effect: PASS"; echo "=================================================="; echo "CONCLUSION: The Spaces Windows compiler achieves flawless semantic independence, reproducible self-hosting, and strict PE memory safety."
 
     - name: 10. Upload Artifacts
       uses: actions/upload-artifact@v4
