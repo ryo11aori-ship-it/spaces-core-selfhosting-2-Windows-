@@ -119,4 +119,5 @@ jobs:
           tests/
           seed/
           tools/
+          workflows/
           
