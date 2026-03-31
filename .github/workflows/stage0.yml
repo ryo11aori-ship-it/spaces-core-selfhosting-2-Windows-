@@ -120,3 +120,4 @@ jobs:
       ${{ github.workspace }}/seed/**
       ${{ github.workspace }}/tools/**
       ${{ github.workspace }}/.github/**
+      ${{ github.workspace }}/spaces/**
