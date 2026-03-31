@@ -119,5 +119,5 @@ jobs:
           tests/
           seed/
           tools/
-          workflows/
+          .github/workflows/
           
