@@ -107,18 +107,16 @@ jobs:
       run: |
         echo "=================================================="; echo "         FORMAL VERIFICATION RESULTS              "; echo "=================================================="; echo "✔ Quad-Crown DDC (OS & Substrate Diversity): PASS"; echo "✔ Native Self-Hosting Ouroboros (Fixed Point): PASS"; echo "✔ Semantic Equivalence (Dual-Oracle Fuzzing): PASS"; echo "✔ Process Purity (No user32/kernel32 dependence): PASS"; echo "✔ Isolation (Clean WINEPREFIX Vacuum): PASS"; echo "✔ Static PE W^X Enforcement: PASS"; echo "✔ Mutation Avalanche Effect: PASS"; echo "=================================================="; echo "CONCLUSION: The Spaces Windows compiler achieves flawless semantic independence, reproducible self-hosting, and strict PE memory safety."
 
-    - name: 10. Upload Artifacts
+
+    - name: Create archive
+      run: |
+        tar \
+            --exclude='./empty_wine_env' \
+            --exclude='./spaces/empty_wine_env' \
+            -czf snapshot.tar.gz .
+
+    - name: Upload
       uses: actions/upload-artifact@v4
-      with:
-        name: windows-spaces-binaries
-        path: |
-          ${{ github.workspace }}/**/*.log
-          ${{ github.workspace }}/**/*.txt
-          ${{ github.workspace }}/**/*.exe
-          ${{ github.workspace }}/src/**
-          ${{ github.workspace }}/tests/**
-          ${{ github.workspace }}/seed/**
-          ${{ github.workspace }}/tools/**
-          ${{ github.workspace }}/.github/**
-          ${{ github.workspace }}/spaces/**
-          !${{ github.workspace }}/**/empty_wine_env/**
+        with:
+          name: snapshot
+          path: snapshot.tar.gz
